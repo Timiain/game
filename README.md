@@ -2,18 +2,20 @@
 
 一个基于 Streamlit 的可视化小说生成器，支持：
 
-- 世界观动态创建与编辑（可用提示词 + LLM 生成）
-- 角色与场景管理（支持 LLM JSON 生成 + 手工编辑）
-- 事件发展线与节点管理
-- 节点串联生成（后续节点自动参考前文，保证连贯）
+- 世界观动态创建与编辑（可用提示词 + LLM 生成 + 提示词改写）
+- 角色与场景管理（支持 LLM JSON 生成 + 手工编辑 + 删除）
+- 事件发展线与节点管理（增删改、节点顺序调整、可视化）
+- 全故事线连贯生成 + 单节点重生成（基于历史脉络）
 - 导出完整小说 Markdown
 
 ## 快速开始
 
 ```bash
 pip install -r requirements.txt
-streamlit run app.py
+python -m streamlit run app.py
 ```
+
+> 直接执行 `python app.py` 会提示正确启动方式，避免 bare mode 的 ScriptRunContext 警告。
 
 ## LLM 调用
 
@@ -25,4 +27,4 @@ streamlit run app.py
 ## 数据存储
 
 - 业务数据：`data/novel_data.json`
-- token日志：`data/token_log.jsonl`
+- token 日志：`data/token_log.jsonl`
