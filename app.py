@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from typing import List, Optional
@@ -230,6 +231,23 @@ def generate_node_text(world, line, node, idx, total, history, llm_cfg):
     )
 
 
+def render_generation_animation(current_idx, total, node_title, stage_text):
+    progress = current_idx / max(total, 1)
+    st.progress(progress, text=f"生成进度：{current_idx}/{total}")
+    st.caption(f"🎬 正在生成节点《{node_title}》- {stage_text}")
+
+
+def typewriter_text(container, text, speed=0.01, chunk_size=18):
+    if not text:
+        container.info("该节点暂未生成文本。")
+        return
+    shown = ""
+    for i in range(0, len(text), chunk_size):
+        shown += text[i : i + chunk_size]
+        container.markdown(shown)
+        time.sleep(speed)
+
+
 def make_id(prefix):
     return f"{prefix}_{uuid.uuid4().hex[:8]}"
 
@@ -241,6 +259,7 @@ def get_world(db, world_id):
 def main():
     st.set_page_config(page_title="小说可视化生成器", layout="wide")
     st.title("📚 小说可视化生成器")
+    st.caption("面向策划与写作团队：从世界观到可导出的连贯长篇，一站式可视化编排。")
 
     db = NovelDB()
 
@@ -261,6 +280,32 @@ def main():
         "num_ctx": int(num_ctx),
         "num_predict": int(num_predict),
     }
+
+    if "play_animation" not in st.session_state:
+        st.session_state.play_animation = True
+    if "last_generation_report" not in st.session_state:
+        st.session_state.last_generation_report = []
+
+    with st.expander("🚀 使用引导（推荐）", expanded=False):
+        st.markdown(
+            "1. 先在【世界】中建立世界观。\n"
+            "2. 在【角色】【场景】补齐素材资产。\n"
+            "3. 在【故事线】配置节点、关联人物/场景并生成。\n"
+            "4. 在【导出小说】统一预览与下载。"
+        )
+        st.session_state.play_animation = st.toggle(
+            "启用生成过程动画", value=st.session_state.play_animation
+        )
+
+    world_count = len(db.worlds)
+    char_count = sum(len(w.characters) for w in db.worlds)
+    scene_count = sum(len(w.scenes) for w in db.worlds)
+    line_count = sum(len(w.storylines) for w in db.worlds)
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("世界", world_count)
+    m2.metric("角色", char_count)
+    m3.metric("场景", scene_count)
+    m4.metric("故事线", line_count)
 
     tab_world, tab_role, tab_scene, tab_story, tab_export = st.tabs(["世界", "角色", "场景", "故事线", "导出小说"])
 
@@ -480,19 +525,49 @@ def main():
                 chart += "}"
                 st.graphviz_chart(chart)
 
+            st.markdown("#### 生成控制台")
+            st.caption("支持全量生成与单节点重生成；可开启动画查看生成过程。")
+
             c1, c2 = st.columns([1, 1])
             with c1:
                 if st.button("生成该故事线完整小说"):
                     history = ""
+                    st.session_state.last_generation_report = []
+                    progress_holder = st.empty()
+                    stage_holder = st.empty()
+                    preview_holder = st.container(border=True)
+
                     for i, n in enumerate(line.nodes, start=1):
+                        if st.session_state.play_animation:
+                            with progress_holder:
+                                render_generation_animation(i, len(line.nodes), n.title, "构建上下文")
+                            time.sleep(0.15)
+
+                        with stage_holder:
+                            st.info(f"🧠 生成节点 {i}/{len(line.nodes)}：{n.title}")
+
                         res = generate_node_text(world, line, n, i, len(line.nodes), history, llm_cfg)
                         if isinstance(res, dict) and res.get("error"):
                             st.error(f"第{i}节点生成失败: {res['error']}")
+                            st.session_state.last_generation_report.append(f"❌ 节点{i} {n.title} 失败")
                             break
+
                         n.generated_text = res
                         history += f"\n[节点{i}:{n.title}] {n.generated_text}\n"
+                        st.session_state.last_generation_report.append(f"✅ 节点{i} {n.title} 完成")
+
+                        with preview_holder:
+                            st.markdown(f"**最新完成节点：{n.title}**")
+                            if st.session_state.play_animation:
+                                ph = st.empty()
+                                typewriter_text(ph, n.generated_text[:320], speed=0.004, chunk_size=24)
+                            else:
+                                short = n.generated_text[:320]
+                                st.write(short + ("..." if len(n.generated_text) > 320 else ""))
+
                     db.save()
                     st.success("已完成所有可生成节点")
+
             with c2:
                 node_target = st.selectbox("单节点重生成", [n.id for n in line.nodes] if line.nodes else [], format_func=lambda x: next(n.title for n in line.nodes if n.id == x) if x else x)
                 if line.nodes and st.button("仅重生成选中节点"):
@@ -501,6 +576,12 @@ def main():
                     for p, n in enumerate(line.nodes[:idx], start=1):
                         history += f"\n[节点{p}:{n.title}] {n.generated_text}\n"
                     target_node = line.nodes[idx]
+                    anim_holder = st.empty()
+                    if st.session_state.play_animation:
+                        with anim_holder:
+                            render_generation_animation(idx + 1, len(line.nodes), target_node.title, "单节点重生成")
+                        time.sleep(0.2)
+
                     res = generate_node_text(world, line, target_node, idx + 1, len(line.nodes), history, llm_cfg)
                     if isinstance(res, dict) and res.get("error"):
                         st.error(res["error"])
@@ -508,6 +589,12 @@ def main():
                         target_node.generated_text = res
                         db.save()
                         st.success("节点重生成成功")
+
+            if st.session_state.last_generation_report:
+                with st.expander("📜 最近一次生成报告", expanded=True):
+                    for item in st.session_state.last_generation_report:
+                        st.write(item)
+
 
             for i, n in enumerate(line.nodes, start=1):
                 with st.expander(f"{i}. {n.title}"):
